@@ -182,6 +182,85 @@ and `<b>` (bold).
 YouTubeTranscriptApi().fetch(video_ids, languages=['de', 'en'], preserve_formatting=True)
 ```
 
+## Flask REST API
+
+This repository also includes a separate `uv`-managed Flask API submodule under
+`services/flask_api/`. It accepts a YouTube video URL plus one or more requested
+language codes and returns the matching transcriptions.
+
+Start the API locally with `uv`:
+
+```bash
+cd services/flask_api
+uv sync
+uv run youtube-transcript-flask-api
+```
+
+Or run the deployment script:
+
+```bash
+cd services/flask_api
+./scripts/deploy.sh
+```
+
+The server reads these environment variables:
+
+- `YTA_API_HOST`: bind host, default `0.0.0.0`
+- `YTA_API_PORT`: bind port, default `8080`
+- `YTA_API_DEBUG`: Flask debug flag, default `false`
+- `YTA_PROXY_HTTP_URL`: optional HTTP proxy for `GenericProxyConfig`
+- `YTA_PROXY_HTTPS_URL`: optional HTTPS proxy for `GenericProxyConfig`
+- `YTA_GUNICORN_WORKERS`: gunicorn worker count used by `services/flask_api/scripts/deploy.sh`
+- `YTA_GUNICORN_TIMEOUT`: gunicorn timeout used by `services/flask_api/scripts/deploy.sh`
+
+Example request:
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/v1/transcripts \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://www.youtube.com/watch?v=GJLlxj_dtq8",
+    "languages": "en,zh",
+    "preserve_formatting": false
+  }'
+```
+
+Example response:
+
+```json
+{
+  "video_id": "GJLlxj_dtq8",
+  "transcripts": [
+    {
+      "language": "English",
+      "language_code": "en",
+      "transcription": "Hello world",
+      "is_generated": false,
+      "is_translated": false
+    },
+    {
+      "language": "Chinese (Simplified)",
+      "language_code": "zh",
+      "transcription": "你好，世界",
+      "is_generated": true,
+      "is_translated": true
+    }
+  ],
+  "errors": []
+}
+```
+
+The endpoint also supports `GET /api/v1/transcripts?url=...&languages=en,zh`.
+When one requested language cannot be resolved, successful transcripts are still
+returned and the failed language is described in `errors`.
+
+There is also a simple smoke-test script for a running service:
+
+```bash
+cd services/flask_api
+./scripts/test_api.sh http://127.0.0.1:8080
+```
+
 ### List available transcripts
 
 If you want to list all transcripts which are available for a given video you can call:

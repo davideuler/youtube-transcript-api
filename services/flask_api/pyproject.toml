@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "youtube-transcript-flask-api"
+version = "0.1.0"
+description = "Flask REST API wrapper for youtube-transcript-api"
+readme = "README.md"
+requires-python = ">=3.8,<3.15"
+dependencies = [
+    "youtube-transcript-api",
+    "flask>=2.3.3,<3.0.0",
+    "gunicorn>=23.0.0,<24.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.3",
+]
+
+[project.scripts]
+youtube-transcript-flask-api = "ytt_flask_api.app:main"
+
+[tool.uv.sources]
+youtube-transcript-api = { path = "../.." }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ytt_flask_api"]
