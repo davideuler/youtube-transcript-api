@@ -1,5 +1,7 @@
+import logging
 import os
 import re
+from logging.handlers import RotatingFileHandler
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import parse_qs, urlparse
 
@@ -24,6 +26,7 @@ from youtube_transcript_api.proxies import GenericProxyConfig, InvalidProxyConfi
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = "8881"
 DEFAULT_LANGUAGES = ["en"]
+DEFAULT_LOG_FILE = "ytt_flask_api.log"
 VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 
@@ -101,9 +104,13 @@ def create_app(config: Optional[Dict[str, Any]] = None) -> Flask:
         HOST=os.getenv("YTA_API_HOST", DEFAULT_HOST),
         PORT=os.getenv("YTA_API_PORT", DEFAULT_PORT),
         DEBUG=os.getenv("YTA_API_DEBUG", "false"),
+        LOG_FILE=os.getenv("YTA_API_LOG_FILE", DEFAULT_LOG_FILE),
+        LOG_LEVEL=os.getenv("YTA_API_LOG_LEVEL", "INFO"),
     )
     if config is not None:
         app.config.update(config)
+
+    _configure_logging(app)
 
     @app.get("/healthz")
     def healthcheck():
@@ -137,12 +144,29 @@ def create_app(config: Optional[Dict[str, Any]] = None) -> Flask:
             )
 
             status_code = 200 if result["transcripts"] else 404
+            if status_code == 404:
+                app.logger.warning(
+                    "transcripts 404 (no matching transcripts): "
+                    "video_id=%s url=%s languages=%s errors=%s",
+                    result.get("video_id"),
+                    url,
+                    languages,
+                    result.get("errors"),
+                )
             return jsonify(result), status_code
         except ValueError as error:
             return jsonify({"error": "BadRequest", "message": str(error)}), 400
         except InvalidProxyConfig as error:
             return jsonify({"error": "InvalidProxyConfig", "message": str(error)}), 500
         except CouldNotRetrieveTranscript as error:
+            status = _status_code_for_exception(error)
+            if status == 404:
+                app.logger.warning(
+                    "transcripts 404 (%s): url=%s message=%s",
+                    error.__class__.__name__,
+                    locals().get("url"),
+                    str(error),
+                )
             return (
                 jsonify(
                     {
@@ -150,7 +174,7 @@ def create_app(config: Optional[Dict[str, Any]] = None) -> Flask:
                         "message": str(error),
                     }
                 ),
-                _status_code_for_exception(error),
+                status,
             )
 
     return app
@@ -220,6 +244,43 @@ def _supports_translation(transcript, language_code: str) -> bool:
         if getattr(translation_language, "language_code", None) == language_code:
             return True
     return False
+
+
+def _configure_logging(app: Flask) -> None:
+    if app.config.get("TESTING"):
+        return
+    log_level = logging.getLevelName(str(app.config.get("LOG_LEVEL", "INFO")).upper())
+    if not isinstance(log_level, int):
+        log_level = logging.INFO
+    app.logger.setLevel(log_level)
+
+    formatter = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
+
+    has_stream = any(
+        isinstance(h, logging.StreamHandler)
+        and not isinstance(h, logging.FileHandler)
+        for h in app.logger.handlers
+    )
+    if not has_stream:
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(formatter)
+        app.logger.addHandler(stream_handler)
+
+    log_file = app.config.get("LOG_FILE")
+    if log_file and not any(
+        isinstance(h, RotatingFileHandler) and getattr(h, "_ytt_log_file", None) == log_file
+        for h in app.logger.handlers
+    ):
+        file_handler = RotatingFileHandler(
+            log_file, maxBytes=5_000_000, backupCount=3, encoding="utf-8"
+        )
+        file_handler.setFormatter(formatter)
+        file_handler._ytt_log_file = log_file  # type: ignore[attr-defined]
+        app.logger.addHandler(file_handler)
+
+    app.logger.propagate = False
 
 
 def _build_proxy_config(
